@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 # ===== CONFIGURATION =====
 THINGSBOARD_HOST = "demo.thingsboard.io"  # or "thingsboard.cloud"
-ACCESS_TOKEN = "loJVqKZxqIuNSfhzzpiB"    # Your device access token
+ACCESS_TOKEN = "5VRotByuBcKD82t1PB8i"    # Your device access token
 
 @app.route('/esp32-data', methods=['POST'])
 def receive_esp32_data():
@@ -93,3 +93,4 @@ if __name__ == '__main__':
     print("📡 Send POST requests to /esp32-data")
     print("🧪 Test ThingsBoard connection: GET /test-thingsboard")
     app.run(debug=True)
+
