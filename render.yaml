@@ -1,6 +1,38 @@
+# render.yaml
 services:
   - type: web
-    name: esp32-thingsbridge
+    name: plant-disease-detection-api
     env: python
+    plan: free
+    region: oregon  # or any preferred region
+    branch: main
+    
+    # Build configuration
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app
+    
+    # Environment variables
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.16
+      - key: FLASK_ENV
+        value: production
+      - key: THINGSBOARD_HOST
+        value: demo.thingsboard.io
+      - key: ACCESS_TOKEN
+        value: 5VRotByuBcKD82t1PB8i
+    
+    # Health check path
+    healthCheckPath: /
+    
+    # Auto-deploy from GitHub
+    repo: https://github.com/your-username/your-repo-name
+
+  # Optional: Add a cron job for periodic tasks
+  - type: cron
+    name: model-cleanup
+    schedule: "0 0 * * 0"  # Every Sunday at midnight
+    env: python
+    buildCommand: pip install -r requirements.txt
+    runCommand: python cleanup_old_models.py
+    branch: main
