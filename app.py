@@ -8,17 +8,29 @@ from PIL import Image
 import io
 import base64
 import os
+import logging
 
 app = Flask(__name__)
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ===== CONFIGURATION =====
 THINGSBOARD_HOST = "demo.thingsboard.io"  # or "thingsboard.cloud"
 ACCESS_TOKEN = "5VRotByuBcKD82t1PB8i"    # Your device access token
 
 # ===== PLANT DISEASE MODEL CONFIGURATION =====
-# Load the TFLite model and labels when the server starts
+# Initialize variables
+interpreter = None
+disease_database = {}
+
 try:
     print("🤖 Loading AI Model...")
+    # Check if model file exists
+    if not os.path.exists("plant_disease_model.tflite"):
+        raise FileNotFoundError("plant_disease_model.tflite not found")
+    
     interpreter = tf.lite.Interpreter(model_path="plant_disease_model.tflite")
     interpreter.allocate_tensors()
     input_details = interpreter.get_input_details()
@@ -26,14 +38,25 @@ try:
     print("✅ AI Model Loaded Successfully!")
     
     # Load disease labels and their cures
-    with open("disease_cures.json", "r") as f:
-        disease_database = json.load(f)
-    print("✅ Disease Database Loaded!")
-    
+    if os.path.exists("disease_cures.json"):
+        with open("disease_cures.json", "r") as f:
+            disease_database = json.load(f)
+        print("✅ Disease Database Loaded!")
+    else:
+        print("⚠️  disease_cures.json not found, using empty database")
+        disease_database = {}
+        
 except Exception as e:
     print(f"❌ Failed to load AI model: {e}")
     interpreter = None
     disease_database = {}
+
+def fix_base64_padding(base64_string):
+    """Add padding to base64 string if needed"""
+    padding = len(base64_string) % 4
+    if padding:
+        base64_string += '=' * (4 - padding)
+    return base64_string
 
 def predict_disease(image_bytes):
     """Predict disease from image bytes using TensorFlow Lite"""
@@ -78,22 +101,48 @@ def predict_disease(image_bytes):
 @app.route('/esp32-data', methods=['POST'])
 def receive_esp32_data():
     try:
-        # Get data from ESP32
-        esp32_data = request.get_json()
-        print("📥 Received from ESP32:", {k: v for k, v in esp32_data.items() if k != 'image'})  # Don't print full image
+        # Get raw data first for debugging
+        raw_data = request.get_data(as_text=True)
+        logger.info(f"📥 Raw request data (first 500 chars): {raw_data[:500]}")
         
-        # Check if image data is present
-        if 'image' not in esp32_data:
+        # Try to parse JSON
+        try:
+            esp32_data = request.get_json()
+            if esp32_data is None:
+                logger.error("❌ Failed to parse JSON - data is None")
+                # Try manual JSON parsing
+                try:
+                    esp32_data = json.loads(raw_data)
+                    logger.info("✅ Manual JSON parsing succeeded")
+                except json.JSONDecodeError as e:
+                    logger.error(f"❌ Manual JSON parsing failed: {e}")
+                    return jsonify({"status": "error", "message": f"Invalid JSON: {str(e)}"}), 400
+        except Exception as e:
+            logger.error(f"❌ JSON parsing exception: {e}")
+            return jsonify({"status": "error", "message": f"JSON parse error: {str(e)}"}), 400
+
+        logger.info(f"✅ Successfully parsed JSON: {list(esp32_data.keys()) if esp32_data else 'empty'}")
+        
+        # Check if image data exists
+        if not esp32_data or 'image' not in esp32_data:
+            logger.error("❌ No image data in JSON")
             return jsonify({"status": "error", "message": "No image data received"}), 400
         
-        # Extract and decode the image
+        # Extract and decode the image with padding fix
         image_base64 = esp32_data['image']
-        image_bytes = base64.b64decode(image_base64)
-        print(f"📸 Decoded image: {len(image_bytes)} bytes")
+        
+        # Fix base64 padding if needed
+        try:
+            image_base64 = fix_base64_padding(image_base64)
+            image_bytes = base64.b64decode(image_base64)
+            logger.info(f"📸 Successfully decoded image: {len(image_bytes)} bytes")
+        except Exception as e:
+            logger.error(f"❌ Base64 decoding error: {e}")
+            return jsonify({"status": "error", "message": f"Invalid base64 data: {str(e)}"}), 400
         
         # Predict disease
         disease_name, confidence, cure_advice = predict_disease(image_bytes)
-        print(f"🔍 Prediction: {disease_name} ({confidence:.2%})")
+        logger.info(f"🔍 Prediction: {disease_name} ({confidence:.2%})")
         
         # Prepare comprehensive data for ThingsBoard
         thingsboard_data = {
@@ -115,35 +164,43 @@ def receive_esp32_data():
             "ai_model": "tensorflow_lite"
         }
         
-        print("📤 Sending to ThingsBoard:", {k: v for k, v in thingsboard_data.items() if k != 'cure_advice'})
+        logger.info("📤 Sending to ThingsBoard: %s", {k: v for k, v in thingsboard_data.items() if k != 'cure_advice'})
         
         # Send to ThingsBoard
-        url = f"https://{THINGSBOARD_HOST}/api/v1/{ACCESS_TOKEN}/telemetry"
-        response = requests.post(url, json=thingsboard_data, timeout=10)
-        
-        print(f"📡 ThingsBoard response status: {response.status_code}")
-        
-        if response.status_code == 200:
-            print("✅ Successfully sent to ThingsBoard!")
-            return jsonify({
-                "status": "success", 
-                "message": "Data sent to ThingsBoard",
-                "prediction": {
-                    "disease": disease_name,
-                    "confidence": confidence,
-                    "cure": cure_advice
-                }
-            })
-        else:
-            print(f"❌ FAILED to send to ThingsBoard: {response.status_code}")
+        try:
+            url = f"https://{THINGSBOARD_HOST}/api/v1/{ACCESS_TOKEN}/telemetry"
+            response = requests.post(url, json=thingsboard_data, timeout=10)
+            
+            logger.info(f"📡 ThingsBoard response status: {response.status_code}")
+            
+            if response.status_code == 200:
+                logger.info("✅ Successfully sent to ThingsBoard!")
+                return jsonify({
+                    "status": "success", 
+                    "message": "Data sent to ThingsBoard",
+                    "prediction": {
+                        "disease": disease_name,
+                        "confidence": confidence,
+                        "cure": cure_advice
+                    }
+                })
+            else:
+                logger.error(f"❌ FAILED to send to ThingsBoard: {response.status_code} - {response.text}")
+                return jsonify({
+                    "status": "error", 
+                    "code": response.status_code,
+                    "message": response.text
+                }), 500
+                
+        except Exception as e:
+            logger.error(f"❌ ThingsBoard connection error: {e}")
             return jsonify({
                 "status": "error", 
-                "code": response.status_code,
-                "message": response.text
+                "message": f"Failed to connect to ThingsBoard: {str(e)}"
             }), 500
             
     except Exception as e:
-        print(f"❌ Exception: {e}")
+        logger.error(f"❌ Exception in receive_esp32_data: {e}")
         return jsonify({"status": "error", "message": str(e)}), 400
 
 @app.route('/test-model', methods=['GET'])
@@ -171,6 +228,29 @@ def test_model():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route('/test-thingsboard', methods=['GET'])
+def test_thingsboard():
+    """Test endpoint to check ThingsBoard connection"""
+    try:
+        test_data = {
+            "test_temperature": 25.5,
+            "test_humidity": 60.0,
+            "test_message": "Connection test from Flask server",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        url = f"https://{THINGSBOARD_HOST}/api/v1/{ACCESS_TOKEN}/telemetry"
+        response = requests.post(url, json=test_data, timeout=10)
+        
+        return jsonify({
+            "status": "success" if response.status_code == 200 else "error",
+            "thingsboard_status": response.status_code,
+            "message": response.text
+        })
+        
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route('/')
 def home():
     return jsonify({
@@ -181,11 +261,13 @@ def home():
             "test_connection": "GET /test-thingsboard",
             "test_model": "GET /test-model"
         },
-        "model_loaded": interpreter is not None
+        "model_loaded": interpreter is not None,
+        "disease_database_loaded": len(disease_database) > 0
     })
 
 if __name__ == '__main__':
     print("🚀 Server started with AI Disease Detection!")
     print("📡 Send POST requests to /esp32-data with image data")
     print("🤖 AI Model status:", "Loaded" if interpreter else "Not loaded")
-    app.run(debug=True)
+    print("📚 Disease database entries:", len(disease_database))
+    app.run(debug=True, host='0.0.0.0', port=10000)
