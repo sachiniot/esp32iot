@@ -6,7 +6,7 @@ app = Flask(__name__)
 
 # ThingsBoard configuration - UPDATE THESE WITH YOUR CREDENTIALS
 THINGSBOARD_URL = "https://demo.thingsboard.io"
-DEVICE_ACCESS_TOKEN = "iiUIjLtQikbR1yEtgUS4"
+DEVICE_ACCESS_TOKEN = "rTDdjKOCJTeV9N1RQH1R"
 
 # The endpoint your ESP32 should call
 @app.route('/api/data', methods=['POST'])
@@ -97,4 +97,5 @@ def health_check():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
+
 
