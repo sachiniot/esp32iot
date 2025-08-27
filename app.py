@@ -1,103 +1,115 @@
-from flask import Flask, jsonify
+# app.py
+from flask import Flask, request, jsonify
 import requests
-import os
+import json
 from datetime import datetime
-import logging
 
 app = Flask(__name__)
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# ThingsBoard configuration - UPDATE THESE WITH YOUR CREDENTIALS
+THINGSBOARD_URL = "https://your-thingsboard-instance.com"
+DEVICE_ACCESS_TOKEN = "your_device_access_token_here"
 
-# Weather API configuration (you can use OpenWeatherMap, WeatherAPI, etc.)
-WEATHER_API_KEY = os.environ.get('WEATHER_API_KEY', 'your_default_api_key')
-WEATHER_API_URL = "http://api.openweathermap.org/data/2.5/weather"
-
-@app.route('/')
-def home():
-    return jsonify({
-        "message": "Weather API Server is running",
-        "endpoints": {
-            "weather": "/weather/<city>",
-            "weather_with_coords": "/weather?lat=<latitude>&lon=<longitude>"
-        }
-    })
-
-@app.route('/weather/<city>')
-def get_weather_by_city(city):
+@app.route('/api/data', methods=['POST'])
+def receive_data():
     try:
-        # Make request to weather API
-        params = {
-            'q': city,
-            'appid': WEATHER_API_KEY,
-            'units': 'metric'  # Use 'imperial' for Fahrenheit
+        # Get data from ESP32
+        esp_data = request.get_json()
+        
+        if not esp_data:
+            return jsonify({"error": "No JSON data received"}), 400
+        
+        print(f"Received data from ESP32: {esp_data}")
+        
+        ####################################################################
+        # EXTRACTING DATA FROM ESP32 - THESE ARE YOUR CUSTOM VARIABLES
+        ####################################################################
+        # Extract data sent from ESP32 - update these variable names to match your JSON structure
+        device_id = esp_data.get("device_id", "unknown")
+        temperature = esp_data.get("temperature", 0)      # Your temperature data
+        humidity = esp_data.get("humidity", 0)            # Your humidity data
+        pressure = esp_data.get("pressure", 0)            # Your pressure data
+        sensor_value1 = esp_data.get("sensor1", 0)        # Your custom sensor 1
+        sensor_value2 = esp_data.get("sensor2", 0)        # Your custom sensor 2
+        # Add more variables here based on your ESP32 data structure
+        
+        ####################################################################
+        # PROCESS YOUR DATA - ADD YOUR CUSTOM PROCESSING LOGIC HERE
+        ####################################################################
+        # Example processing - replace with your actual calculations
+        processed_temp = temperature * 1.1  # Example adjustment
+        avg_sensor = (sensor_value1 + sensor_value2) / 2  # Example calculation
+        status = "NORMAL" if temperature < 30 else "WARNING"  # Example logic
+        
+        # Add your custom processing here
+        # result_value1 = your_calculation(sensor_value1, sensor_value2)
+        # result_value2 = another_calculation(temperature, humidity)
+        
+        ####################################################################
+        # PREPARE DATA FOR THINGSBOARD - ADD YOUR RESULT VARIABLES HERE
+        ####################################################################
+        # Create the data structure to send to ThingsBoard
+        thingsboard_data = {
+            "ts": int(datetime.utcnow().timestamp() * 1000),  # Timestamp in milliseconds
+            "values": {
+                # Original values from ESP32
+                "temperature": temperature,
+                "humidity": humidity,
+                "pressure": pressure,
+                "sensor1": sensor_value1,
+                "sensor2": sensor_value2,
+                
+                # Your processed values - ADD YOUR RESULT VARIABLES HERE
+                "processed_temp": processed_temp,      # Add your result values
+                "avg_sensor": avg_sensor,              # Add your result values
+                "status": status,                      # Add your result values
+                # "result1": result_value1,            # Add your result values
+                # "result2": result_value2,            # Add your result values
+            }
         }
         
-        response = requests.get(WEATHER_API_URL, params=params, timeout=10)
-        response.raise_for_status()  # Raise exception for bad status codes
+        # Send processed data to ThingsBoard
+        success = send_to_thingsboard(thingsboard_data)
         
-        weather_data = response.json()
-        
-        # Extract relevant information
-        processed_data = {
-            'city': weather_data.get('name'),
-            'country': weather_data.get('sys', {}).get('country'),
-            'temperature': weather_data.get('main', {}).get('temp'),
-            'feels_like': weather_data.get('main', {}).get('feels_like'),
-            'humidity': weather_data.get('main', {}).get('humidity'),
-            'description': weather_data['weather'][0]['description'] if weather_data.get('weather') else 'N/A',
-            'wind_speed': weather_data.get('wind', {}).get('speed'),
-            'timestamp': datetime.utcnow().isoformat()
-        }
-        
-        logger.info(f"Weather data fetched for {city}")
-        return jsonify(processed_data)
-        
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching weather data: {e}")
-        return jsonify({"error": "Failed to fetch weather data", "details": str(e)}), 500
+        if success:
+            return jsonify({
+                "status": "success", 
+                "message": "Data processed and sent to ThingsBoard",
+                "processed_data": thingsboard_data
+            }), 200
+        else:
+            return jsonify({"error": "Failed to send data to ThingsBoard"}), 500
+            
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        return jsonify({"error": "Internal server error"}), 500
+        print(f"Error processing data: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/weather')
-def get_weather_by_coords():
+def send_to_thingsboard(data):
+    """Send processed data to ThingsBoard"""
     try:
-        lat = request.args.get('lat')
-        lon = request.args.get('lon')
+        url = f"{THINGSBOARD_URL}/api/v1/{DEVICE_ACCESS_TOKEN}/telemetry"
         
-        if not lat or not lon:
-            return jsonify({"error": "Latitude and longitude parameters are required"}), 400
-        
-        params = {
-            'lat': lat,
-            'lon': lon,
-            'appid': WEATHER_API_KEY,
-            'units': 'metric'
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
         }
         
-        response = requests.get(WEATHER_API_URL, params=params, timeout=10)
-        response.raise_for_status()
+        response = requests.post(url, headers=headers, json=data, timeout=10)
         
-        weather_data = response.json()
-        
-        processed_data = {
-            'city': weather_data.get('name'),
-            'coordinates': {
-                'latitude': weather_data.get('coord', {}).get('lat'),
-                'longitude': weather_data.get('coord', {}).get('lon')
-            },
-            'temperature': weather_data.get('main', {}).get('temp'),
-            'description': weather_data['weather'][0]['description'] if weather_data.get('weather') else 'N/A',
-            'timestamp': datetime.utcnow().isoformat()
-        }
-        
-        return jsonify(processed_data)
-        
-    except requests.exceptions.RequestException as e:
-        return jsonify({"error": "Failed to fetch weather data"}), 500
+        if response.status_code in [200, 201]:
+            print("Data successfully sent to ThingsBoard")
+            return True
+        else:
+            print(f"ThingsBoard error: {response.status_code} - {response.text}")
+            return False
+            
+    except Exception as e:
+        print(f"Error sending to ThingsBoard: {str(e)}")
+        return False
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({"status": "healthy", "timestamp": datetime.utcnow().isoformat()})
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=os.environ.get('DEBUG', 'False').lower() == 'true')
+    app.run(host='0.0.0.0', port=5000)
