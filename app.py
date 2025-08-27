@@ -1,15 +1,14 @@
-# app.py
 from flask import Flask, request, jsonify
 import requests
-import json
 from datetime import datetime
 
 app = Flask(__name__)
 
 # ThingsBoard configuration - UPDATE THESE WITH YOUR CREDENTIALS
-THINGSBOARD_URL = "https://your-thingsboard-instance.com"
+THINGSBOARD_URL = "https://demo.thingsboard.io"
 DEVICE_ACCESS_TOKEN = "meo4D7UlGowodDDwIelA"
 
+# The endpoint your ESP32 should call
 @app.route('/api/data', methods=['POST'])
 def receive_data():
     try:
@@ -24,25 +23,18 @@ def receive_data():
         ####################################################################
         # EXTRACTING DATA FROM ESP32 - THESE ARE YOUR CUSTOM VARIABLES
         ####################################################################
-        # Extract data sent from ESP32 - update these variable names to match your JSON structure
-        device_id = esp_data.get("device_id", "unknown")
+        # Extract data sent from ESP32
         temperature = esp_data.get("temperature", 0)      # Your temperature data
-        humidity = esp_data.get("humidity", 0)            # Your humidity data
-        pressure = esp_data.get("pressure", 0)            # Your pressure data
-        sensor_value1 = esp_data.get("sensor1", 0)        # Your custom sensor 1
-        sensor_value2 = esp_data.get("sensor2", 0)        # Your custom sensor 2
-        # Add more variables here based on your ESP32 data structure
         
         ####################################################################
         # PROCESS YOUR DATA - ADD YOUR CUSTOM PROCESSING LOGIC HERE
         ####################################################################
         # Example processing - replace with your actual calculations
-        tbtemperature=40.22
-        tbalert=True
+        processed_temp = temperature * 1.1  # Example adjustment
+        status = "NORMAL" if temperature < 30 else "WARNING"  # Example logic
         
         # Add your custom processing here
         # result_value1 = your_calculation(sensor_value1, sensor_value2)
-        # result_value2 = another_calculation(temperature, humidity)
         
         ####################################################################
         # PREPARE DATA FOR THINGSBOARD - ADD YOUR RESULT VARIABLES HERE
@@ -53,15 +45,11 @@ def receive_data():
             "values": {
                 # Original values from ESP32
                 "temperature": temperature,
-                "humidity": humidity,
-                "pressure": pressure,
-                "sensor1": sensor_value1,
-                "sensor2": sensor_value2,
                 
                 # Your processed values - ADD YOUR RESULT VARIABLES HERE
-                "tbtemperature": tbtemperature,      # Add your result values
-                "tbalert": tbalert,              # Add your result values
-               
+                "processed_temp": processed_temp,      # Add your result values
+                "status": status,                      # Add your result values
+                # "result1": result_value1,            # Add your result values
             }
         }
         
@@ -88,7 +76,6 @@ def send_to_thingsboard(data):
         
         headers = {
             "Content-Type": "application/json",
-            "Accept": "application/json"
         }
         
         response = requests.post(url, headers=headers, json=data, timeout=10)
@@ -110,5 +97,3 @@ def health_check():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
-
-
