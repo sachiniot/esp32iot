@@ -8,7 +8,7 @@ app = Flask(__name__)
 
 # ThingsBoard configuration - UPDATE THESE WITH YOUR CREDENTIALS
 THINGSBOARD_URL = "https://your-thingsboard-instance.com"
-DEVICE_ACCESS_TOKEN = "your_device_access_token_here"
+DEVICE_ACCESS_TOKEN = "meo4D7UlGowodDDwIelA"
 
 @app.route('/api/data', methods=['POST'])
 def receive_data():
@@ -113,3 +113,4 @@ def health_check():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
+
