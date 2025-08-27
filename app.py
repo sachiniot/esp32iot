@@ -37,9 +37,8 @@ def receive_data():
         # PROCESS YOUR DATA - ADD YOUR CUSTOM PROCESSING LOGIC HERE
         ####################################################################
         # Example processing - replace with your actual calculations
-        processed_temp = temperature * 1.1  # Example adjustment
-        avg_sensor = (sensor_value1 + sensor_value2) / 2  # Example calculation
-        status = "NORMAL" if temperature < 30 else "WARNING"  # Example logic
+        tbtemperature=40.22
+        tbalert=True
         
         # Add your custom processing here
         # result_value1 = your_calculation(sensor_value1, sensor_value2)
@@ -60,11 +59,9 @@ def receive_data():
                 "sensor2": sensor_value2,
                 
                 # Your processed values - ADD YOUR RESULT VARIABLES HERE
-                "processed_temp": processed_temp,      # Add your result values
-                "avg_sensor": avg_sensor,              # Add your result values
-                "status": status,                      # Add your result values
-                # "result1": result_value1,            # Add your result values
-                # "result2": result_value2,            # Add your result values
+                "tbtemperature": tbtemperature,      # Add your result values
+                "tbalert": tbalert,              # Add your result values
+               
             }
         }
         
@@ -113,4 +110,5 @@ def health_check():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
+
 
