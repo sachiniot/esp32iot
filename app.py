@@ -36,6 +36,7 @@ def receive_data():
         temperature = esp_data.get("temperature", 0)      # Your temperature data
         latitude = esp_data.get("latitude", 40.7128)      # Default to NY if not provided
         longitude = esp_data.get("longitude", -74.0060)   # Default to NY if not provided
+        device_id = esp_data.get("device_id", "ESP32_001")
         
         ####################################################################
         # GET SOLAR DATA FROM OPEN-METEO API
@@ -66,6 +67,7 @@ def receive_data():
                 "temperature": temperature,
                 "latitude": latitude,
                 "longitude": longitude,
+                "device_id": device_id,
                 
                 # Solar data from Open-Meteo
                 "cloud_cover": current_solar.get('cloud_cover_percentage', 0),
@@ -92,22 +94,85 @@ def receive_data():
         }
         
         # Send processed data to ThingsBoard
-        success = send_to_thingsboard(thingsboard_data)
+        thingsboard_result = send_to_thingsboard(thingsboard_data)
+        thingsboard_success = thingsboard_result.get("success", False)
         
-        if success:
-            return jsonify({
-                "status": "success", 
-                "message": "Data processed and sent to ThingsBoard",
-                "esp_data": esp_data,
-                "solar_data": solar_data,
-                "thingsboard_data": thingsboard_data
-            }), 200
+        # Prepare comprehensive response for ESP32
+        response_data = {
+            "status": "success" if thingsboard_success else "partial_success",
+            "message": "Data processed and sent to ThingsBoard" if thingsboard_success else "Data processed but ThingsBoard failed",
+            "timestamp": datetime.utcnow().isoformat(),
+            "thingsboard_status": thingsboard_result,
+            "solar_data_received": solar_data is not None,
+            "thingsboard_payload": thingsboard_data,  # This is what was sent to ThingsBoard
+            "processed_data": {
+                "original_temperature": temperature,
+                "processed_temperature": processed_temp,
+                "status": status,
+                "solar_radiation": current_solar.get('solar_radiation', {}).get('ghi_wm2', 0),
+                "cloud_cover": current_solar.get('cloud_cover_percentage', 0),
+                "estimated_power": current_solar.get('panel_performance', {}).get('estimated_output_w', 0),
+                "lux_intensity": current_solar.get('lux_intensity_approx', 0),
+                "is_day": current_solar.get('is_day', False),
+                "weather_condition": current_solar.get('weather_condition', 'unknown')
+            },
+            "location_info": {
+                "latitude": latitude,
+                "longitude": longitude,
+                "location_name": solar_data.get('location', {}).get('name', 'Unknown')
+            }
+        }
+        
+        if thingsboard_success:
+            return jsonify(response_data), 200
         else:
-            return jsonify({"error": "Failed to send data to ThingsBoard"}), 500
+            return jsonify(response_data), 207  # 207 Multi-Status (partial success)
             
     except Exception as e:
         print(f"Error processing data: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.utcnow().isoformat(),
+            "thingsboard_status": {"success": False, "error": str(e)}
+        }), 500
+
+def send_to_thingsboard(data):
+    """Send processed data to ThingsBoard and return detailed status"""
+    try:
+        url = f"{THINGSBOARD_URL}/api/v1/{DEVICE_ACCESS_TOKEN}/telemetry"
+        
+        headers = {
+            "Content-Type": "application/json",
+        }
+        
+        response = requests.post(url, headers=headers, json=data, timeout=10)
+        
+        if response.status_code in [200, 201]:
+            print("Data successfully sent to ThingsBoard")
+            return {
+                "success": True,
+                "status_code": response.status_code,
+                "message": "Data sent successfully",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        else:
+            print(f"ThingsBoard error: {response.status_code} - {response.text}")
+            return {
+                "success": False,
+                "status_code": response.status_code,
+                "message": response.text,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+    except Exception as e:
+        print(f"Error sending to ThingsBoard: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Network error connecting to ThingsBoard",
+            "timestamp": datetime.utcnow().isoformat()
+        }
 
 def get_solar_meteo_data(latitude, longitude):
     """Get solar data from Open-Meteo API for the current location"""
@@ -149,7 +214,9 @@ def get_solar_meteo_data(latitude, longitude):
             "location": {
                 "latitude": latitude,
                 "longitude": longitude,
-                "name": response.Name() or "Unknown location"
+                "name": response.Name() or "Unknown location",
+                "elevation": response.Elevation(),
+                "timezone": response.Timezone()
             },
             "current_hour": current_hour_data,
             "past_3_hours": hourly_data[:-1] if len(hourly_data) > 1 else [],
@@ -295,28 +362,6 @@ def calculate_solar_summary(hourly_data):
         "total_hours": len(hourly_data)
     }
 
-def send_to_thingsboard(data):
-    """Send processed data to ThingsBoard"""
-    try:
-        url = f"{THINGSBOARD_URL}/api/v1/{DEVICE_ACCESS_TOKEN}/telemetry"
-        
-        headers = {
-            "Content-Type": "application/json",
-        }
-        
-        response = requests.post(url, headers=headers, json=data, timeout=10)
-        
-        if response.status_code in [200, 201]:
-            print("Data successfully sent to ThingsBoard")
-            return True
-        else:
-            print(f"ThingsBoard error: {response.status_code} - {response.text}")
-            return False
-            
-    except Exception as e:
-        print(f"Error sending to ThingsBoard: {str(e)}")
-        return False
-
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({"status": "healthy", "timestamp": datetime.utcnow().isoformat()})
@@ -327,11 +372,26 @@ def solar_test():
     lat = request.args.get('lat', 40.7128, type=float)
     lon = request.args.get('lon', -74.0060, type=float)
     
-    solar_data = get_solar_meteo_data(lat, lon)            
+    solar_data = get_solar_meteo_data(lat, lon)
     if solar_data:
         return jsonify(solar_data)
     else:
         return jsonify({"error": "Failed to get solar data"}), 500
+
+@app.route('/thingsboard-test', methods=['GET'])
+def thingsboard_test():
+    """Test endpoint to check ThingsBoard connection"""
+    test_data = {
+        "ts": int(datetime.utcnow().timestamp() * 1000),
+        "values": {
+            "test_temperature": 25.5,
+            "test_message": "Connection test from Flask server",
+            "test_timestamp": datetime.utcnow().isoformat()
+        }
+    }
+    
+    result = send_to_thingsboard(test_data)
+    return jsonify(result)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
